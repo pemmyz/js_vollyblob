@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blobby Volley</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game" width="1600" height="900"></canvas>
+        <div id="hud">
+            <div id="score">L 0 - 0 R</div>
+            <div id="server-indicator"></div>
+            <div id="message"></div>
+            <div id="debug-info">FPS: 60</div>
+        </div>
+        <div id="panel">
+            <h2>Blobby Volley</h2>
+            <div class="control-group">
+                <label>Mode:</label>
+                <div class="radio-group">
+                    <input type="radio" id="mode-ai" name="mode" value="1P" checked><label for="mode-ai">1P vs AI</label>
+                    <input type="radio" id="mode-2p" name="mode" value="2P"><label for="mode-2p">2P Local</label>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Difficulty:</label>
+                <div class="radio-group">
+                    <input type="radio" id="diff-easy" name="difficulty" value="Easy"><label for="diff-easy">Easy</label>
+                    <input type="radio" id="diff-normal" name="difficulty" value="Normal" checked><label for="diff-normal">Normal</label>
+                    <input type="radio" id="diff-hard" name="difficulty" value="Hard"><label for="diff-hard">Hard</label>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Win Score:</label>
+                <div class="radio-group">
+                    <input type="radio" id="win-11" name="win-score" value="11" checked><label for="win-11">11</label>
+                    <input type="radio" id="win-15" name="win-score" value="15"><label for="win-15">15</label>
+                </div>
+            </div>
+            <div class="control-group">
+                <label>Touch Limit:</label>
+                <div class="radio-group">
+                    <input type="radio" id="touch-on" name="touch-limit" value="true" checked><label for="touch-on">On (3)</label>
+                    <input type="radio" id="touch-off" name="touch-limit" value="false"><label for="touch-off">Off</label>
+                </div>
+            </div>
+            <div class="button-group">
+                <button id="pause-btn">Start Game</button>
+                <button id="theme-btn">Toggle Theme</button>
+            </div>
+            <div class="instructions">
+                P1: A/D/W | P2: ←/→/↑ | P: Pause | F3: Toggle FPS
+            </div>
+        </div>
+    </div>
+
+    <!-- Planck.js Physics Engine -->
+    <script src="planck.min.js"></script>
+    <!-- Game Logic -->
+    <script src="script.js"></script>
+</body>
+</html>
