@@ -8,7 +8,8 @@
     // -- CONFIGURATION --
     const Config = {
         PPM: 100,
-        GRAVITY: -15,
+        // CHANGE: Slightly increased gravity for a heavier feel.
+        GRAVITY: -16,
         DT: 1 / 60,
         VEL_ITERS: 8,
         POS_ITERS: 3,
@@ -22,8 +23,10 @@
         BALL_DENS: 0.6,
         BALL_REST: 0.78,
         BALL_FRIC: 0.15,
-        BALL_DAMP: 0.02,
-        BALL_VMAX: 18,
+        // CHANGE: Significantly increased damping to make the ball fly slower.
+        BALL_DAMP: 0.3,
+        // CHANGE: Reduced max velocity to prevent excessively fast spikes.
+        BALL_VMAX: 12,
 
         BLOB_R: 0.38,
         BLOB_DENS: 1.0,
@@ -31,9 +34,9 @@
         BLOB_FRIC: 0.9,
         BLOB_DAMP: 2.0,
         MOVE_FORCE: 15.0,
-        JUMP_IMPULSE: 5.5,
+        // CHANGE: Slightly reduced jump impulse to match slower ball physics.
+        JUMP_IMPULSE: 5.2,
 
-        // CHANGE: Significantly reduced vertical serve impulse for a gentler, playable serve.
         SERVE_TOSS_L: { vx: 1.8, vy: 2.8 },
         SERVE_TOSS_R: { vx: -1.8, vy: 2.8 },
 
@@ -54,37 +57,26 @@
         },
         scores: { left: 0, right: 0 },
         servingSide: 'left',
-        lastTouch: null, // 'left' or 'right'
+        lastTouch: null,
         touchCount: 0,
         rallyStarted: false,
         inputFrozen: true,
-
-        // UI & Game Options
-        mode: '1P', // '1P' or '2P'
+        mode: '1P',
         difficulty: 'Normal',
         useTouchLimit: true,
         winScore: 11,
-
         isPaused: true,
         showDebug: false,
-        
-        // Timers
         timers: {
             scoreDebounce: 0,
             resetCountdown: 0,
             autoServe: 0,
         },
-
-        // Input
         keysPressed: new Set(),
-
-        // AI state
         ai: {
             targetX: Config.COURT_W * 0.75,
             reactionTimer: 0,
         },
-
-        // Rendering state
         render: {
             ballTrail: [],
             blob1Scale: { x: 1, y: 1 },
@@ -94,7 +86,7 @@
     };
 
     // -- DOM ELEMENTS --
-    let canvas, ctx, hud, panel, scoreEl, serverEl, messageEl, debugEl, pauseBtn;
+    let canvas, ctx, panel, scoreEl, serverEl, messageEl, debugEl, actionBtn, settingsBtn;
 
     // -- UTILITIES --
     const clamp = (val, min, max) => Math.max(min, Math.min(val, max));
@@ -108,18 +100,16 @@
     window.addEventListener('load', () => {
         canvas = document.getElementById('game');
         ctx = canvas.getContext('2d');
-
-        hud = document.getElementById('hud');
         panel = document.getElementById('panel');
         scoreEl = document.getElementById('score');
         serverEl = document.getElementById('server-indicator');
         messageEl = document.getElementById('message');
         debugEl = document.getElementById('debug-info');
-        pauseBtn = document.getElementById('pause-btn');
+        actionBtn = document.getElementById('action-btn');
+        settingsBtn = document.getElementById('settings-btn');
 
         setupUI();
         setupInputListeners();
-        
         initWorld();
         
         let lastTime = 0;
@@ -154,7 +144,6 @@
             allowSleep: true,
         });
         
-        // Create boundaries
         const ground = State.world.createBody({type: 'static', position: Vec2(0, 0)});
         ground.createFixture(pl.Edge(Vec2(0, 0), Vec2(Config.COURT_W, 0)), { restitution: 0.2, friction: 0.8 });
         ground.getFixtureList().setUserData({ type: 'ground' });
@@ -166,12 +155,9 @@
         const rightWall = State.world.createBody({type: 'static'});
         rightWall.createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
         
-        // CHANGE: Added a ceiling to prevent the ball from leaving the play area.
         const topWall = State.world.createBody({type: 'static'});
         topWall.createFixture(pl.Edge(Vec2(0, Config.COURT_H), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
 
-        // Create net
-        // The net's body is positioned by its center. COURT_W / 2 is the exact horizontal center of the world.
         const netPos = Vec2(Config.COURT_W / 2, Config.NET_H / 2);
         const net = State.world.createBody({type: 'static', position: netPos});
         net.createFixture(pl.Box(Config.NET_T / 2, Config.NET_H / 2), {restitution: 0.2, friction: 0.1});
@@ -277,11 +263,8 @@
 
     function isGrounded(blob) {
         const pos = blob.getPosition();
-        const rayStart = Vec2(pos.x, pos.y);
-        const rayEnd = Vec2(pos.x, pos.y - Config.BLOB_R - 0.05);
         let isGrounded = false;
-
-        State.world.rayCast(rayStart, rayEnd, (fixture) => {
+        State.world.rayCast(Vec2(pos.x, pos.y), Vec2(pos.x, pos.y - Config.BLOB_R - 0.05), (fixture) => {
             if (fixture.getBody() === State.bodies.ground) {
                 isGrounded = true;
                 return 0;
@@ -323,7 +306,7 @@
         State.isPaused = true;
         panel.classList.remove('hidden');
         messageEl.textContent = `${winner.toUpperCase()} WINS!`;
-        pauseBtn.textContent = 'New Match';
+        actionBtn.textContent = 'New Match';
     }
     
     function startNewMatch() {
@@ -334,7 +317,7 @@
         
         State.isPaused = false;
         panel.classList.add('hidden');
-        pauseBtn.textContent = 'Pause';
+        actionBtn.textContent = 'Resume'; // It will be hidden, but set for pause menu
         
         resetRally();
     }
@@ -379,212 +362,36 @@
             const bodyB = contact.getFixtureB().getBody();
             const dataA = bodyA.getUserData() || {};
             const dataB = bodyB.getUserData() || {};
-
             const ball = dataA.type === 'ball' ? bodyA : (dataB.type === 'ball' ? bodyB : null);
             if (!ball) return;
-            
             const otherData = dataA.type === 'ball' ? dataB : dataA;
 
             if (otherData.type === 'ground') {
-                const ballPos = ball.getPosition();
-                awardPoint(ballPos.x < Config.COURT_W / 2 ? 'right' : 'left');
+                awardPoint(ball.getPosition().x < Config.COURT_W / 2 ? 'right' : 'left');
             } else if (otherData.type === 'blob') {
-                if(State.lastTouch !== otherData.side) {
-                    State.touchCount = 1;
-                } else {
-                    State.touchCount++;
-                }
+                if (State.lastTouch !== otherData.side) State.touchCount = 1;
+                else State.touchCount++;
                 State.lastTouch = otherData.side;
                 
-                if(State.useTouchLimit && State.touchCount > 3) {
+                if (State.useTouchLimit && State.touchCount > 3) {
                      awardPoint(otherData.side === 'left' ? 'right' : 'left');
                 }
-
-                State.render.contactEffects.push({
-                    pos: ball.getPosition(),
-                    radius: 0,
-                    alpha: 1
-                });
+                State.render.contactEffects.push({pos: ball.getPosition(), radius: 0, alpha: 1});
             }
         });
     }
 
-    // -- AI LOGIC --
-    function stepAI(dt) {
-        State.ai.reactionTimer -= dt;
-        if (State.ai.reactionTimer > 0) return;
-        
-        State.ai.reactionTimer = Config.AI_REACTION_DELAY[State.difficulty];
-        
-        const ball = State.bodies.ball;
-        const aiBlob = State.bodies.blob2;
-        const ballPos = ball.getPosition();
-        const blobPos = aiBlob.getPosition();
+    // -- AI LOGIC (omitted for brevity, no changes from previous version)
+    function stepAI(dt){State.ai.reactionTimer-=dt;if(State.ai.reactionTimer>0)return;State.ai.reactionTimer=Config.AI_REACTION_DELAY[State.difficulty];const ball=State.bodies.ball,aiBlob=State.bodies.blob2,ballPos=ball.getPosition(),blobPos=aiBlob.getPosition();if(!State.rallyStarted&&State.servingSide==="right"){if(ballPos.y<blobPos.y+Config.BLOB_R*2.5){State.ai.targetX=ballPos.x+.1;if(Math.abs(blobPos.x-ballPos.x)<.2)tryJump(aiBlob)}}else if(ballPos.x>Config.COURT_W/2){const prediction=predictBallLanding();State.ai.targetX=prediction.pos.x-.2;const shouldJump=ball.getLinearVelocity().y<-1&&Math.abs(ballPos.x-blobPos.x)<Config.BLOB_R*1.5&&ballPos.y-blobPos.y<Config.BLOB_R*2.5&&ballPos.y>blobPos.y;if(shouldJump&&Math.random()>Config.AI_JUMP_RANDOM[State.difficulty])tryJump(aiBlob)}else State.ai.targetX=Config.COURT_W*.75;State.ai.targetX=clamp(State.ai.targetX,Config.COURT_W/2+Config.NET_T+Config.BLOB_R,Config.COURT_W-Config.BLOB_R);const error=State.ai.targetX-blobPos.x,force=clamp(error*10,-Config.MOVE_FORCE,Config.MOVE_FORCE)*Config.AI_FORCE_SCALE[State.difficulty];aiBlob.applyForceToCenter(Vec2(force,0),!0)}
+    function predictBallLanding(){let pos=State.bodies.ball.getPosition().clone(),vel=State.bodies.ball.getLinearVelocity().clone();const dt=1/60;for(let i=0;i<120;i++){vel.y+=Config.GRAVITY*dt;vel.mul(1-Config.BALL_DAMP*dt);pos.add(vel.clone().mul(dt));if(pos.x>Config.COURT_W/2&&vel.y<0)return{pos:pos,time:i*dt};if(pos.y<Config.BALL_R)return{pos:pos,time:i*dt};if(pos.x<Config.BALL_R||pos.x>Config.COURT_W-Config.BALL_R)return{pos:pos,time:i*dt};if(pos.y>Config.COURT_H-Config.BALL_R)return{pos:pos,time:i*dt}}return{pos:Vec2(Config.COURT_W*.75,0),time:2}}
 
-        if (!State.rallyStarted && State.servingSide === 'right') {
-            if (ballPos.y < blobPos.y + Config.BLOB_R * 2.5) {
-                State.ai.targetX = ballPos.x + 0.1;
-                if (Math.abs(blobPos.x - ballPos.x) < 0.2) tryJump(aiBlob);
-            }
-        }
-        else if (ballPos.x > Config.COURT_W / 2) {
-            const prediction = predictBallLanding();
-            State.ai.targetX = prediction.pos.x - 0.2;
-            
-            const shouldJump = 
-                ball.getLinearVelocity().y < -1.0 &&
-                Math.abs(ballPos.x - blobPos.x) < Config.BLOB_R * 1.5 &&
-                ballPos.y - blobPos.y < Config.BLOB_R * 2.5 && ballPos.y > blobPos.y;
-
-            if (shouldJump && Math.random() > Config.AI_JUMP_RANDOM[State.difficulty]) {
-               tryJump(aiBlob);
-            }
-        } else {
-            State.ai.targetX = Config.COURT_W * 0.75;
-        }
-
-        State.ai.targetX = clamp(State.ai.targetX, Config.COURT_W / 2 + Config.NET_T + Config.BLOB_R, Config.COURT_W - Config.BLOB_R);
-        const error = State.ai.targetX - blobPos.x;
-        const force = clamp(error * 10, -Config.MOVE_FORCE, Config.MOVE_FORCE) * Config.AI_FORCE_SCALE[State.difficulty];
-        aiBlob.applyForceToCenter(Vec2(force, 0), true);
-    }
-
-    function predictBallLanding() {
-        let pos = State.bodies.ball.getPosition().clone();
-        let vel = State.bodies.ball.getLinearVelocity().clone();
-        const dt = 1/60;
-        
-        for(let i=0; i<120; i++) {
-            vel.y += Config.GRAVITY * dt;
-            vel.mul(1 - (Config.BALL_DAMP * dt));
-            pos.add(vel.clone().mul(dt));
-
-            if (pos.x > Config.COURT_W / 2 && vel.y < 0) {
-                return { pos: pos, time: i * dt };
-            }
-            if (pos.y < Config.BALL_R) {
-                return { pos: pos, time: i * dt };
-            }
-            if (pos.x < Config.BALL_R || pos.x > Config.COURT_W - Config.BALL_R) {
-                 return { pos: pos, time: i * dt };
-            }
-            if (pos.y > Config.COURT_H - Config.BALL_R) {
-                 return { pos: pos, time: i * dt };
-            }
-        }
-        return { pos: Vec2(Config.COURT_W * 0.75, 0), time: 2.0 };
-    }
-
-    // -- RENDERING --
-    function render() {
-        ctx.clearRect(0, 0, 1600, 900);
-        ctx.save();
-        
-        drawCourt();
-        
-        if (State.bodies.ball) {
-            drawBallTrail();
-            drawBody(State.bodies.ball, getComputedStyle(document.body).getPropertyValue('--ball-color'));
-            drawBlob(State.bodies.blob1, getComputedStyle(document.body).getPropertyValue('--blob1-color'), 'blob1Scale');
-            drawBlob(State.bodies.blob2, getComputedStyle(document.body).getPropertyValue('--blob2-color'), 'blob2Scale');
-            drawContactEffects();
-        }
-        
-        ctx.restore();
-    }
-    
-    function drawCourt() {
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--court-bg');
-        ctx.fillRect(0, 0, 1600, 900);
-
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--court-line');
-        ctx.fillRect(0, 900 - 5, 1600, 5);
-        
-        const netScreenPos = worldToScreen(State.bodies.net.getPosition());
-        const netWidth = Config.NET_T * Config.PPM;
-        const netHeight = Config.NET_H * Config.PPM;
-        ctx.fillStyle = getComputedStyle(document.body).getPropertyValue('--net-color');
-        ctx.fillRect(netScreenPos.x - netWidth / 2, netScreenPos.y - netHeight / 2, netWidth, netHeight);
-    }
-    
-    function drawBody(body, color) {
-        const pos = worldToScreen(body.getPosition());
-        const fixture = body.getFixtureList();
-        if (!fixture) return;
-        const radius = fixture.getShape().m_radius * Config.PPM;
-
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-    }
-
-    function drawBlob(body, color, scaleKey) {
-        const pos = worldToScreen(body.getPosition());
-        const vel = body.getLinearVelocity();
-        const radius = body.getFixtureList().getShape().m_radius * Config.PPM;
-
-        const targetScaleX = 1 + 0.08 * clamp(vel.x / 6, -1, 1);
-        const targetScaleY = 1 - 0.12 * clamp(Math.abs(vel.y) / 8, 0, 1);
-        
-        State.render[scaleKey].x = lerp(State.render[scaleKey].x, targetScaleX, 0.2);
-        State.render[scaleKey].y = lerp(State.render[scaleKey].y, targetScaleY, 0.2);
-        
-        ctx.save();
-        ctx.translate(pos.x, pos.y);
-        ctx.scale(State.render[scaleKey].x, State.render[scaleKey].y);
-        
-        ctx.beginPath();
-        ctx.arc(0, 0, radius, 0, Math.PI * 2);
-        ctx.fillStyle = color;
-        ctx.fill();
-        
-        ctx.beginPath();
-        const eyeSide = body.getUserData().side === 'left' ? 1 : -1;
-        const eyeX = radius * 0.4 * eyeSide / State.render[scaleKey].x;
-        const eyeY = -radius * 0.2 / State.render[scaleKey].y;
-        ctx.arc(eyeX, eyeY, radius * 0.15, 0, Math.PI * 2);
-        ctx.fillStyle = '#fff';
-        ctx.fill();
-
-        ctx.restore();
-    }
-
-    function drawBallTrail() {
-        const trail = State.render.ballTrail;
-        trail.push(State.bodies.ball.getPosition().clone());
-        if (trail.length > 10) trail.shift();
-
-        const color = getComputedStyle(document.body).getPropertyValue('--ball-color');
-        for (let i = 0; i < trail.length; i++) {
-            const screenPos = worldToScreen(trail[i]);
-            const radius = Config.BALL_R * Config.PPM * (i / trail.length);
-            ctx.beginPath();
-            ctx.arc(screenPos.x, screenPos.y, radius, 0, Math.PI * 2);
-            ctx.fillStyle = color;
-            ctx.globalAlpha = 0.5 * (i / trail.length);
-            ctx.fill();
-        }
-        ctx.globalAlpha = 1.0;
-    }
-
-    function drawContactEffects() {
-        ctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--text-color');
-        ctx.lineWidth = 2;
-        State.render.contactEffects = State.render.contactEffects.filter(effect => {
-            effect.radius += 2;
-            effect.alpha -= 0.05;
-            if (effect.alpha <= 0) return false;
-            
-            const screenPos = worldToScreen(effect.pos);
-            ctx.globalAlpha = effect.alpha;
-            ctx.beginPath();
-            ctx.arc(screenPos.x, screenPos.y, effect.radius, 0, Math.PI * 2);
-            ctx.stroke();
-            return true;
-        });
-        ctx.globalAlpha = 1.0;
-    }
+    // -- RENDERING (omitted for brevity, no changes from previous version)
+    function render(){ctx.clearRect(0,0,1600,900);ctx.save();drawCourt();if(State.bodies.ball){drawBallTrail();drawBody(State.bodies.ball,getComputedStyle(document.body).getPropertyValue("--ball-color"));drawBlob(State.bodies.blob1,getComputedStyle(document.body).getPropertyValue("--blob1-color"),"blob1Scale");drawBlob(State.bodies.blob2,getComputedStyle(document.body).getPropertyValue("--blob2-color"),"blob2Scale");drawContactEffects()}ctx.restore()}
+    function drawCourt(){ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--court-bg");ctx.fillRect(0,0,1600,900);ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--court-line");ctx.fillRect(0,900-5,1600,5);const netScreenPos=worldToScreen(State.bodies.net.getPosition()),netWidth=Config.NET_T*Config.PPM,netHeight=Config.NET_H*Config.PPM;ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--net-color");ctx.fillRect(netScreenPos.x-netWidth/2,netScreenPos.y-netHeight/2,netWidth,netHeight)}
+    function drawBody(body,color){const pos=worldToScreen(body.getPosition()),fixture=body.getFixtureList();if(!fixture)return;const radius=fixture.getShape().m_radius*Config.PPM;ctx.beginPath();ctx.arc(pos.x,pos.y,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.fill()}
+    function drawBlob(body,color,scaleKey){const pos=worldToScreen(body.getPosition()),vel=body.getLinearVelocity(),radius=body.getFixtureList().getShape().m_radius*Config.PPM,targetScaleX=1+.08*clamp(vel.x/6,-1,1),targetScaleY=1-.12*clamp(Math.abs(vel.y)/8,0,1);State.render[scaleKey].x=lerp(State.render[scaleKey].x,targetScaleX,.2);State.render[scaleKey].y=lerp(State.render[scaleKey].y,targetScaleY,.2);ctx.save();ctx.translate(pos.x,pos.y);ctx.scale(State.render[scaleKey].x,State.render[scaleKey].y);ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.beginPath();const eyeSide=body.getUserData().side==="left"?1:-1,eyeX=radius*.4*eyeSide/State.render[scaleKey].x,eyeY=-radius*.2/State.render[scaleKey].y;ctx.arc(eyeX,eyeY,radius*.15,0,Math.PI*2);ctx.fillStyle="#fff";ctx.fill();ctx.restore()}
+    function drawBallTrail(){const trail=State.render.ballTrail;trail.push(State.bodies.ball.getPosition().clone());if(trail.length>10)trail.shift();const color=getComputedStyle(document.body).getPropertyValue("--ball-color");for(let i=0;i<trail.length;i++){const screenPos=worldToScreen(trail[i]),radius=Config.BALL_R*Config.PPM*(i/trail.length);ctx.beginPath();ctx.arc(screenPos.x,screenPos.y,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.globalAlpha=.5*(i/trail.length);ctx.fill()}ctx.globalAlpha=1}
+    function drawContactEffects(){ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue("--text-color");ctx.lineWidth=2;State.render.contactEffects=State.render.contactEffects.filter(effect=>{effect.radius+=2;effect.alpha-=.05;if(effect.alpha<=0)return!1;const screenPos=worldToScreen(effect.pos);ctx.globalAlpha=effect.alpha;ctx.beginPath();ctx.arc(screenPos.x,screenPos.y,effect.radius,0,Math.PI*2);ctx.stroke();return!0});ctx.globalAlpha=1}
 
     // -- UI & INPUT --
     let frameCount = 0;
@@ -601,14 +408,13 @@
         }
         
         if (State.timers.resetCountdown > 0 && !State.isPaused) {
-            const count = Math.ceil(State.timers.resetCountdown);
-            messageEl.textContent = `... ${count} ...`;
+            messageEl.textContent = `... ${Math.ceil(State.timers.resetCountdown)} ...`;
         } else if (State.isPaused && panel.classList.contains('hidden')) {
             messageEl.textContent = 'PAUSED';
         } else if(!State.rallyStarted && !State.isPaused) {
              messageEl.textContent = `... SERVE ...`;
-        } else if (State.isPaused && panel.classList.contains('hidden') === false) {
-            // Message is handled by endMatch, do nothing here to avoid override
+        } else if (!panel.classList.contains('hidden')) {
+             // Let panel text (like WINS!) persist
         } else {
             messageEl.textContent = '';
         }
@@ -635,13 +441,16 @@
             el.addEventListener('change', (e) => State.useTouchLimit = e.target.value === 'true');
         });
         
-        pauseBtn.addEventListener('click', () => {
-            if (pauseBtn.textContent === 'Start Game' || pauseBtn.textContent === 'New Match') {
+        actionBtn.addEventListener('click', () => {
+            const text = actionBtn.textContent;
+            if (text === 'Start Game' || text === 'New Match') {
                 startNewMatch();
-            } else {
+            } else if (text === 'Resume') {
                 togglePause();
             }
         });
+
+        settingsBtn.addEventListener('click', togglePause);
 
         document.getElementById('theme-btn').addEventListener('click', () => {
             document.body.classList.toggle('dark');
@@ -649,17 +458,22 @@
     }
     
     function togglePause() {
+        // Don't allow pausing if the game hasn't started yet.
+        if (actionBtn.textContent === 'Start Game') return;
+
         State.isPaused = !State.isPaused;
         panel.classList.toggle('hidden', !State.isPaused);
-        pauseBtn.textContent = State.isPaused ? 'Resume' : 'Pause';
+        
+        // Only change button text if a match is in progress
+        if (actionBtn.textContent !== 'New Match') {
+            actionBtn.textContent = State.isPaused ? 'Resume' : 'Pause';
+        }
     }
 
     function setupInputListeners() {
         window.addEventListener('keydown', (e) => {
             if (e.key === 'p' || e.key === 'P') {
-                if (pauseBtn.textContent !== 'Start Game' && pauseBtn.textContent !== 'New Match') {
-                    togglePause();
-                }
+                togglePause();
             }
             if (e.key === 'F3') {
                 e.preventDefault();
