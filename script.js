@@ -33,8 +33,9 @@
         MOVE_FORCE: 15.0,
         JUMP_IMPULSE: 5.5,
 
-        SERVE_TOSS_L: { vx: 1.8, vy: 5.2 },
-        SERVE_TOSS_R: { vx: -1.8, vy: 5.2 },
+        // CHANGE: Significantly reduced vertical serve impulse for a gentler, playable serve.
+        SERVE_TOSS_L: { vx: 1.8, vy: 2.8 },
+        SERVE_TOSS_R: { vx: -1.8, vy: 2.8 },
 
         AI_REACTION_DELAY: { Easy: 0.2, Normal: 0.12, Hard: 0.06 },
         AI_FORCE_SCALE: { Easy: 0.8, Normal: 1.0, Hard: 1.2 },
@@ -120,8 +121,6 @@
         setupInputListeners();
         
         initWorld();
-        // The game loop will start, but the game is paused by default
-        // and won't update physics until the user clicks "Start Game".
         
         let lastTime = 0;
         let accumulator = 0;
@@ -150,7 +149,6 @@
     });
 
     function initWorld() {
-        // FIX: Pass allowSleep as a constructor option
         State.world = pl.World({ 
             gravity: Vec2(0, Config.GRAVITY),
             allowSleep: true,
@@ -168,7 +166,12 @@
         const rightWall = State.world.createBody({type: 'static'});
         rightWall.createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
         
+        // CHANGE: Added a ceiling to prevent the ball from leaving the play area.
+        const topWall = State.world.createBody({type: 'static'});
+        topWall.createFixture(pl.Edge(Vec2(0, Config.COURT_H), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
+
         // Create net
+        // The net's body is positioned by its center. COURT_W / 2 is the exact horizontal center of the world.
         const netPos = Vec2(Config.COURT_W / 2, Config.NET_H / 2);
         const net = State.world.createBody({type: 'static', position: netPos});
         net.createFixture(pl.Box(Config.NET_T / 2, Config.NET_H / 2), {restitution: 0.2, friction: 0.1});
@@ -176,11 +179,9 @@
         net.getFixtureList().setUserData({ type: 'net' });
         State.bodies.net = net;
 
-        // Create blobs
         State.bodies.blob1 = createBlob(Config.COURT_W * 0.25, 'left');
         State.bodies.blob2 = createBlob(Config.COURT_W * 0.75, 'right');
 
-        // Create ball
         State.bodies.ball = State.world.createDynamicBody({
             position: Vec2(Config.COURT_W / 2, Config.COURT_H * 0.7),
             linearDamping: Config.BALL_DAMP,
@@ -465,6 +466,9 @@
                 return { pos: pos, time: i * dt };
             }
             if (pos.x < Config.BALL_R || pos.x > Config.COURT_W - Config.BALL_R) {
+                 return { pos: pos, time: i * dt };
+            }
+            if (pos.y > Config.COURT_H - Config.BALL_R) {
                  return { pos: pos, time: i * dt };
             }
         }
