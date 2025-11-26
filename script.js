@@ -1,389 +1,626 @@
+/**
+ * BLOBBY VOLLEY 3D
+ * Physics: Planck.js (2D)
+ * Rendering: Three.js (3D)
+ */
+
 (function() {
     'use strict';
 
-    // -- PLANCK.JS & ALIASES --
-    const pl = planck;
-    const Vec2 = pl.Vec2;
-
-    // -- CONFIGURATION --
+    // --- CONFIGURATION ---
     const Config = {
-        PPM: 100,
-        GRAVITY: -16,
+        // Physics (Meters)
+        GRAVITY: -18,
         DT: 1 / 60,
-        VEL_ITERS: 8,
-        POS_ITERS: 3,
-        COURT_W: 9.0,
-        COURT_H: 6.0,
-        NET_H: 3.0,
-        NET_T: 0.08,
-        BALL_R: 0.16,
-        BALL_DENS: 0.6,
-        BALL_REST: 0.78,
-        BALL_FRIC: 0.15,
-        BALL_DAMP: 0.3,
-        BALL_VMAX: 12,
-        BLOB_R: 0.38,
-        BLOB_DENS: 1.0,
-        BLOB_REST: 0.2,
-        BLOB_FRIC: 0.9,
-        BLOB_DAMP: 2.0,
-        MOVE_FORCE: 15.0,
-        JUMP_IMPULSE: 5.2,
-        SERVE_TOSS_L: { vx: 1.8, vy: 2.8 },
-        SERVE_TOSS_R: { vx: -1.8, vy: 2.8 },
-        MANUAL_SERVE_IMPULSE: { vx: 1.0, vy: 4.5 },
-        AI_REACTION_DELAY: { Easy: 0.2, Normal: 0.12, Hard: 0.06 },
-        AI_FORCE_SCALE: { Easy: 0.8, Normal: 1.0, Hard: 1.2 },
-        AI_JUMP_RANDOM: { Easy: 0.1, Normal: 0.06, Hard: 0.02 },
+        COURT_W: 11.0,
+        COURT_H: 7.0,
+        NET_H: 3.2,
+        NET_T: 0.1,
+        BALL_R: 0.25,
+        BALL_DENS: 0.5,
+        BALL_REST: 0.85,
+        BALL_FRIC: 0.3,
+        BLOB_R: 0.55,
+        BLOB_DENS: 1.2,
+        BLOB_FRIC: 0.1,
+        BLOB_DAMP: 1.5,
+        MOVE_FORCE: 25.0,
+        JUMP_IMPULSE: 7.5,
+        // AI
+        AI_SPEED_FAC: { Easy: 0.6, Normal: 1.0, Hard: 1.4 },
+        AI_ERROR: { Easy: 0.4, Normal: 0.1, Hard: 0.02 },
+        // Visuals
+        COLOR_L: 0xe74c3c, // Red
+        COLOR_R: 0x2ecc71, // Green
+        COLOR_BALL: 0xf1c40f, // Yellow
+        COLOR_COURT: 0x3498db,
+        COLOR_BG_LIGHT: 0xf0f4f8,
+        COLOR_BG_DARK: 0x1a202c,
     };
 
-    // LiveConfig will be modified by the UI, initialized from defaults.
-    let LiveConfig = {};
+    let LiveConfig = { ...Config }; // Mutable config
 
-    const PhysicsPresets = {
-        Default: { GRAVITY: -16, BALL_REST: 0.78, BALL_VMAX: 12 },
-        Floaty: { GRAVITY: -8, BALL_REST: 0.85, BALL_VMAX: 10 },
-        Fast: { GRAVITY: -22, BALL_REST: 0.70, BALL_VMAX: 18 },
-    };
-
-    // -- GAME STATE --
+    // --- GAME STATE ---
     const State = {
+        // Physics
         world: null,
-        bodies: { ball: null, blob1: null, blob2: null, ground: null, net: null },
+        bodies: { ball: null, blob1: null, blob2: null, ground: null },
+        // Game Logic
         scores: { left: 0, right: 0 },
         servingSide: 'left',
-        lastTouch: null,
-        touchCount: 0,
         rallyStarted: false,
+        isPaused: true,
         inputFrozen: true,
         mode: '1P',
         difficulty: 'Normal',
-        useTouchLimit: true,
         winScore: 11,
-        isPaused: true,
-        showDebug: false,
-        serveMode: { active: false, player: null },
-        timers: { scoreDebounce: 0, resetCountdown: 0, autoServe: 0 },
-        keysPressed: new Set(),
-        ai: { targetX: Config.COURT_W * 0.75, reactionTimer: 0 },
-        render: { ballTrail: [], blob1Scale: { x: 1, y: 1 }, blob2Scale: { x: 1, y: 1 }, contactEffects: [] },
+        timers: { reset: 0, scoreDebounce: 0 },
+        keys: new Set(),
+        lastTouch: null,
+        touchCount: 0,
+        // AI
+        ai: { targetX: 0, timer: 0 },
+        // Visuals
+        scene: null,
+        camera: null,
+        renderer: null,
+        meshes: {},
+        particles: []
     };
 
-    // -- DOM ELEMENTS --
-    let canvas, ctx, panel, scoreEl, serverEl, messageEl, debugEl, actionBtn, settingsBtn, physicsPresetEl, gravitySlider, gravityValue, bounceSlider, bounceValue, speedSlider, speedValue;
-
-    // -- UTILITIES --
-    const clamp = (val, min, max) => Math.max(min, Math.min(val, max));
-    const lerp = (a, b, t) => a + (b - a) * t;
-    const worldToScreen = (pos) => ({ x: pos.x * Config.PPM, y: canvas.height - (pos.y * Config.PPM) });
-
-    // -- INITIALIZATION --
+    // --- INIT ---
     window.addEventListener('load', () => {
-        Object.assign(LiveConfig, Config); // Initialize live config
-        
-        canvas = document.getElementById('game');
-        ctx = canvas.getContext('2d');
-        panel = document.getElementById('panel');
-        scoreEl = document.getElementById('score');
-        serverEl = document.getElementById('server-indicator');
-        messageEl = document.getElementById('message');
-        debugEl = document.getElementById('debug-info');
-        actionBtn = document.getElementById('action-btn');
-        settingsBtn = document.getElementById('settings-btn');
-        
-        // Physics UI elements
-        physicsPresetEl = document.getElementById('physics-preset');
-        gravitySlider = document.getElementById('gravity-slider');
-        gravityValue = document.getElementById('gravity-value');
-        bounceSlider = document.getElementById('bounce-slider');
-        bounceValue = document.getElementById('bounce-value');
-        speedSlider = document.getElementById('speed-slider');
-        speedValue = document.getElementById('speed-value');
-
+        initThree();
+        initPhysics();
         setupUI();
-        setupInputListeners();
-        initWorld();
+        setupInputs();
         
-        let lastTime = 0, accumulator = 0;
-        function gameLoop(currentTime) {
-            const deltaTime = (currentTime - lastTime) / 1000;
-            lastTime = currentTime;
+        // Animation Loop
+        let lastTime = 0;
+        function loop(time) {
+            requestAnimationFrame(loop);
+            const dt = (time - lastTime) / 1000 || 0;
+            lastTime = time;
+
             if (!State.isPaused) {
-                accumulator += deltaTime;
-                let steps = 0;
-                while (accumulator >= Config.DT && steps < 5) {
-                    update(Config.DT);
-                    accumulator -= Config.DT;
-                    steps++;
-                }
+                // Fixed time step for physics
+                State.world.step(Config.DT);
+                updateGameLogic(Config.DT);
             }
-            render();
-            updateHUD(deltaTime);
-            requestAnimationFrame(gameLoop);
+
+            updateVisuals(dt); // Interpolate/Update meshes
+            State.renderer.render(State.scene, State.camera);
         }
-        requestAnimationFrame(gameLoop);
+        loop(0);
     });
 
-    function initWorld() {
-        State.world = pl.World({ gravity: Vec2(0, LiveConfig.GRAVITY), allowSleep: true });
+    // --- THREE.JS SETUP ---
+    function initThree() {
+        const container = document.getElementById('game-container');
         
-        const ground = State.world.createBody({type: 'static', position: Vec2(0, 0)});
-        ground.createFixture(pl.Edge(Vec2(0, 0), Vec2(Config.COURT_W, 0)), { restitution: 0.2, friction: 0.8 });
-        ground.getFixtureList().setUserData({ type: 'ground' });
+        // Scene
+        State.scene = new THREE.Scene();
+        State.scene.background = new THREE.Color(Config.COLOR_BG_LIGHT);
+        State.scene.fog = new THREE.Fog(Config.COLOR_BG_LIGHT, 10, 30);
+
+        // Camera
+        State.camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+        State.camera.position.set(Config.COURT_W / 2, 5, 16);
+        State.camera.lookAt(Config.COURT_W / 2, 3, 0);
+
+        // Renderer
+        State.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        State.renderer.setSize(window.innerWidth, window.innerHeight);
+        State.renderer.shadowMap.enabled = true;
+        State.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(State.renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        State.scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+        dirLight.position.set(5, 15, 10);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        dirLight.shadow.camera.left = -10;
+        dirLight.shadow.camera.right = 10;
+        State.scene.add(dirLight);
+
+        // -- MESHES --
+
+        // Materials
+        const blobMatL = new THREE.MeshStandardMaterial({ color: Config.COLOR_L, roughness: 0.1, metalness: 0.1 });
+        const blobMatR = new THREE.MeshStandardMaterial({ color: Config.COLOR_R, roughness: 0.1, metalness: 0.1 });
+        const ballMat = new THREE.MeshStandardMaterial({ color: Config.COLOR_BALL, roughness: 0.3, metalness: 0.0 });
+        const courtMat = new THREE.MeshStandardMaterial({ color: Config.COLOR_COURT, roughness: 0.8 });
+        const netMat = new THREE.MeshPhongMaterial({ color: 0xffffff, opacity: 0.3, transparent: true, side: THREE.DoubleSide });
+
+        // Floor
+        const floorGeo = new THREE.PlaneGeometry(30, 20);
+        const floor = new THREE.Mesh(floorGeo, courtMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        State.scene.add(floor);
+        State.meshes.floor = floor;
+
+        // Court Lines (Visual only)
+        const lineGeo = new THREE.PlaneGeometry(Config.COURT_W, 0.1);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const baseline = new THREE.Mesh(lineGeo, lineMat);
+        baseline.rotation.x = -Math.PI / 2;
+        baseline.position.set(Config.COURT_W/2, 0.01, 0);
+        State.scene.add(baseline);
+
+        // Net
+        const netGeo = new THREE.BoxGeometry(0.1, Config.NET_H, 4); // Thicker Z for 3D look
+        const net = new THREE.Mesh(netGeo, netMat);
+        net.position.set(Config.COURT_W / 2, Config.NET_H / 2, 0);
+        net.castShadow = true;
+        net.receiveShadow = true;
+        State.scene.add(net);
+        
+        // Net Post (Top Bar)
+        const netTopGeo = new THREE.CylinderGeometry(0.08, 0.08, 4.2, 8);
+        const netTop = new THREE.Mesh(netTopGeo, new THREE.MeshStandardMaterial({ color: 0x555555 }));
+        netTop.rotation.x = Math.PI / 2;
+        netTop.position.set(Config.COURT_W/2, Config.NET_H, 0);
+        State.scene.add(netTop);
+
+        // Blobs
+        const blobGeo = new THREE.SphereGeometry(Config.BLOB_R, 32, 32);
+        
+        // P1
+        State.meshes.blob1 = new THREE.Mesh(blobGeo, blobMatL);
+        State.meshes.blob1.castShadow = true;
+        addEyes(State.meshes.blob1, 1);
+        State.scene.add(State.meshes.blob1);
+
+        // P2
+        State.meshes.blob2 = new THREE.Mesh(blobGeo, blobMatR);
+        State.meshes.blob2.castShadow = true;
+        addEyes(State.meshes.blob2, -1);
+        State.scene.add(State.meshes.blob2);
+
+        // Ball
+        State.meshes.ball = new THREE.Mesh(new THREE.SphereGeometry(Config.BALL_R, 32, 32), ballMat);
+        State.meshes.ball.castShadow = true;
+        State.scene.add(State.meshes.ball);
+
+        // Back Wall (Visual Context)
+        const wallGeo = new THREE.PlaneGeometry(40, 20);
+        const wallMat = new THREE.ShadowMaterial({ opacity: 0.1 });
+        const wall = new THREE.Mesh(wallGeo, wallMat);
+        wall.position.set(Config.COURT_W/2, 5, -3);
+        wall.receiveShadow = true;
+        State.scene.add(wall);
+
+        window.addEventListener('resize', onWindowResize);
+    }
+
+    function addEyes(parent, dir) {
+        const whiteMat = new THREE.MeshBasicMaterial({color:0xffffff});
+        const pupilMat = new THREE.MeshBasicMaterial({color:0x000000});
+        
+        const eyeGroup = new THREE.Group();
+        const eyeGeo = new THREE.SphereGeometry(0.12, 16, 16);
+        const pupilGeo = new THREE.SphereGeometry(0.05, 8, 8);
+
+        const eye = new THREE.Mesh(eyeGeo, whiteMat);
+        eye.position.set(dir * 0.3, 0.1, 0.35);
+        const pupil = new THREE.Mesh(pupilGeo, pupilMat);
+        pupil.position.set(dir * 0.35, 0.1, 0.44);
+        
+        eyeGroup.add(eye);
+        eyeGroup.add(pupil);
+        parent.add(eyeGroup);
+    }
+
+    function onWindowResize() {
+        State.camera.aspect = window.innerWidth / window.innerHeight;
+        State.camera.updateProjectionMatrix();
+        State.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    // --- PHYSICS SETUP (Planck.js) ---
+    function initPhysics() {
+        const pl = planck;
+        const Vec2 = pl.Vec2;
+
+        State.world = pl.World({ gravity: Vec2(0, Config.GRAVITY) });
+
+        // Materials
+        const groundFixtureDef = { friction: 0.8, restitution: 0.2 };
+        const wallFixtureDef = { friction: 0.0, restitution: 0.1 };
+
+        // Ground
+        const ground = State.world.createBody(Vec2(0, 0));
+        ground.createFixture(pl.Edge(Vec2(-10, 0), Vec2(30, 0)), groundFixtureDef); // Infinite floor
+        ground.setUserData({ type: 'ground' });
         State.bodies.ground = ground;
 
-        const leftWall = State.world.createBody({type: 'static'});
-        leftWall.createFixture(pl.Edge(Vec2(0, 0), Vec2(0, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
+        // Walls
+        const wallL = State.world.createBody(Vec2(0, 0));
+        wallL.createFixture(pl.Edge(Vec2(0, 0), Vec2(0, 20)), wallFixtureDef);
         
-        const rightWall = State.world.createBody({type: 'static'});
-        rightWall.createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
-        
-        const topWall = State.world.createBody({type: 'static'});
-        topWall.createFixture(pl.Edge(Vec2(0, Config.COURT_H), Vec2(Config.COURT_W, Config.COURT_H)), { restitution: 0.2, friction: 0.8 });
+        const wallR = State.world.createBody(Vec2(0, 0));
+        wallR.createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, 20)), wallFixtureDef);
 
-        const net = State.world.createBody({type: 'static', position: Vec2(Config.COURT_W / 2, Config.NET_H / 2)});
-        net.createFixture(pl.Box(Config.NET_T / 2, Config.NET_H / 2), {restitution: 0.2, friction: 0.1});
-        net.createFixture(pl.Circle(Vec2(0, Config.NET_H / 2), Config.NET_T / 2), {restitution: 0.2, friction: 0.1});
-        net.getFixtureList().setUserData({ type: 'net' });
-        State.bodies.net = net;
+        const ceiling = State.world.createBody(Vec2(0, 0));
+        ceiling.createFixture(pl.Edge(Vec2(-5, 15), Vec2(20, 15)), wallFixtureDef);
+
+        // Net
+        const netBody = State.world.createBody(Vec2(Config.COURT_W / 2, Config.NET_H / 2));
+        netBody.createFixture(pl.Box(Config.NET_T / 2, Config.NET_H / 2), { friction: 0.1, restitution: 0.05 });
+        netBody.createFixture(pl.Circle(Vec2(0, Config.NET_H / 2), Config.NET_T), { friction: 0.2, restitution: 0.1 }); // Top rounded
+        netBody.setUserData({ type: 'net' });
+
+        // Blobs
+        function createBlob(x, side) {
+            const body = State.world.createDynamicBody({
+                position: Vec2(x, Config.BLOB_R),
+                fixedRotation: true,
+                linearDamping: Config.BLOB_DAMP
+            });
+            body.createFixture(pl.Circle(Config.BLOB_R), {
+                density: Config.BLOB_DENS,
+                friction: Config.BLOB_FRIC,
+                restitution: 0.0 // No bounce on ground
+            });
+            body.setUserData({ type: 'blob', side: side });
+            return body;
+        }
 
         State.bodies.blob1 = createBlob(Config.COURT_W * 0.25, 'left');
         State.bodies.blob2 = createBlob(Config.COURT_W * 0.75, 'right');
 
+        // Ball
         State.bodies.ball = State.world.createDynamicBody({
-            position: Vec2(Config.COURT_W / 2, Config.COURT_H * 0.7),
-            linearDamping: Config.BALL_DAMP,
+            position: Vec2(Config.COURT_W / 2, 5),
             bullet: true,
+            linearDamping: 0.1
         });
         State.bodies.ball.createFixture(pl.Circle(Config.BALL_R), {
             density: Config.BALL_DENS,
-            restitution: LiveConfig.BALL_REST,
-            friction: Config.BALL_FRIC,
+            restitution: Config.BALL_REST,
+            friction: Config.BALL_FRIC
         });
         State.bodies.ball.setUserData({ type: 'ball' });
 
-        setupContactListener();
+        // Contacts
+        State.world.on('begin-contact', (contact) => {
+            const fa = contact.getFixtureA(), fb = contact.getFixtureB();
+            const da = fa.getBody().getUserData(), db = fb.getBody().getUserData();
+            if (!da || !db) return;
+
+            const isBall = da.type === 'ball' || db.type === 'ball';
+            if (!isBall) return;
+
+            const other = da.type === 'ball' ? db : da;
+            const ballPos = State.bodies.ball.getPosition();
+
+            if (other.type === 'ground') {
+                spawnParticles(ballPos, Config.COLOR_COURT);
+                handleScore(ballPos.x < Config.COURT_W / 2 ? 'right' : 'left');
+            } else if (other.type === 'blob') {
+                spawnParticles(ballPos, 0xffffff);
+                State.touchCount = (State.lastTouch === other.side) ? State.touchCount + 1 : 1;
+                State.lastTouch = other.side;
+                if (State.touchCount > 3) handleScore(other.side === 'left' ? 'right' : 'left');
+            }
+        });
     }
-    
-    function createBlob(x, side) { /* unchanged */ const blob=State.world.createDynamicBody({position:Vec2(x,Config.BLOB_R),linearDamping:Config.BLOB_DAMP,fixedRotation:!0});blob.createFixture(pl.Circle(Config.BLOB_R),{density:Config.BLOB_DENS,restitution:Config.BLOB_REST,friction:Config.BLOB_FRIC});blob.setUserData({type:"blob",side:side});return blob}
 
-    // -- GAME LOGIC --
-    function update(dt) {
-        handleTimers(dt);
-        if (State.serveMode.active) {
-            const player = State.serveMode.player;
-            const playerPos = player.getPosition();
-            State.bodies.ball.setPosition(Vec2(playerPos.x, playerPos.y + Config.BLOB_R + Config.BALL_R + 0.1));
-            State.bodies.ball.setLinearVelocity(Vec2(0, 0));
+    // --- GAME LOGIC ---
+    function updateGameLogic(dt) {
+        // Timers
+        if (State.timers.scoreDebounce > 0) State.timers.scoreDebounce -= dt;
+        if (State.timers.reset > 0) {
+            State.timers.reset -= dt;
+            if (State.timers.reset <= 0) spawnBall();
+            else updateHUDText(`... ${Math.ceil(State.timers.reset)} ...`);
         }
 
-        if (!State.inputFrozen) applyInputs();
-        if (State.mode === '1P' && !State.inputFrozen) stepAI(dt);
-        
-        State.world.step(dt, Config.VEL_ITERS, Config.POS_ITERS);
-        
-        const ballVel = State.bodies.ball.getLinearVelocity();
-        if (ballVel.lengthSquared() > LiveConfig.BALL_VMAX * LiveConfig.BALL_VMAX) {
-            ballVel.normalize();
-            ballVel.mul(LiveConfig.BALL_VMAX);
-            State.bodies.ball.setLinearVelocity(ballVel);
-        }
-    }
-    
-    function handleTimers(dt) { /* unchanged */ for(const key in State.timers)State.timers[key]>0&&(State.timers[key]-=dt);State.timers.resetCountdown>0&&State.timers.resetCountdown-dt<=0&&serveBall();State.timers.autoServe>0&&State.timers.autoServe-dt<=0&&!State.rallyStarted&&serveBall()}
+        if (State.inputFrozen) return;
 
-    function applyInputs() {
-        // Player 1
-        const blob1 = State.bodies.blob1;
-        let force1 = 0;
-        if (State.keysPressed.has('a')) force1 -= Config.MOVE_FORCE;
-        if (State.keysPressed.has('d')) force1 += Config.MOVE_FORCE;
-        blob1.applyForceToCenter(Vec2(force1, 0), true);
-
-        if (State.keysPressed.has('w')) { tryJump(blob1); State.keysPressed.delete('w'); }
-        if (State.keysPressed.has('s') && !State.serveMode.active && isBlobTouchingGroundedBall(blob1, State.bodies.ball)) {
-            enterServeMode(blob1);
+        // Inputs P1
+        const b1 = State.bodies.blob1;
+        const v1 = b1.getLinearVelocity();
+        let f1 = 0;
+        if (State.keys.has('a')) f1 -= Config.MOVE_FORCE;
+        if (State.keys.has('d')) f1 += Config.MOVE_FORCE;
+        b1.applyForceToCenter(planck.Vec2(f1, 0), true);
+        if (State.keys.has('w') && Math.abs(v1.y) < 0.1 && b1.getPosition().y < 2) {
+            b1.applyLinearImpulse(planck.Vec2(0, Config.JUMP_IMPULSE), b1.getPosition(), true);
         }
 
-        // Player 2
+        // P2 / AI
+        const b2 = State.bodies.blob2;
         if (State.mode === '2P') {
-            const blob2 = State.bodies.blob2;
-            let force2 = 0;
-            if (State.keysPressed.has('arrowleft')) force2 -= Config.MOVE_FORCE;
-            if (State.keysPressed.has('arrowright')) force2 += Config.MOVE_FORCE;
-            blob2.applyForceToCenter(Vec2(force2, 0), true);
-            if (State.keysPressed.has('arrowup')) { tryJump(blob2); State.keysPressed.delete('arrowup'); }
-            if (State.keysPressed.has('arrowdown') && !State.serveMode.active && isBlobTouchingGroundedBall(blob2, State.bodies.ball)) {
-                enterServeMode(blob2);
+            const v2 = b2.getLinearVelocity();
+            let f2 = 0;
+            if (State.keys.has('arrowleft')) f2 -= Config.MOVE_FORCE;
+            if (State.keys.has('arrowright')) f2 += Config.MOVE_FORCE;
+            b2.applyForceToCenter(planck.Vec2(f2, 0), true);
+            if (State.keys.has('arrowup') && Math.abs(v2.y) < 0.1 && b2.getPosition().y < 2) {
+                b2.applyLinearImpulse(planck.Vec2(0, Config.JUMP_IMPULSE), b2.getPosition(), true);
+            }
+        } else {
+            updateAI(dt);
+        }
+
+        // Cap Ball Speed
+        const ball = State.bodies.ball;
+        const bv = ball.getLinearVelocity();
+        const maxSpeed = 20;
+        if (bv.lengthSquared() > maxSpeed * maxSpeed) {
+            bv.normalize();
+            bv.mul(maxSpeed);
+            ball.setLinearVelocity(bv);
+        }
+    }
+
+    function updateAI(dt) {
+        const ball = State.bodies.ball;
+        const b2 = State.bodies.blob2;
+        const ballPos = ball.getPosition();
+        const b2Pos = b2.getPosition();
+
+        // Simple AI logic
+        let targetX = Config.COURT_W * 0.75; // Default home
+
+        // If ball is on right side or coming towards right
+        if (ballPos.x > Config.COURT_W / 2 - 2 || (ball.getLinearVelocity().x > 1)) {
+            // Estimate landing
+            targetX = ballPos.x;
+            // Add error based on difficulty
+            if (Math.abs(ballPos.x - b2Pos.x) > 2) {
+                // Reaction delay simulated by only updating target occasionally
             }
         }
+
+        // Clamp target
+        targetX = Math.max(Config.COURT_W/2 + 1, Math.min(Config.COURT_W - 1, targetX));
+
+        const diff = targetX - b2Pos.x;
+        const speedScale = Config.AI_SPEED_FAC[State.difficulty];
+
+        if (Math.abs(diff) > 0.2) {
+            const dir = Math.sign(diff);
+            b2.applyForceToCenter(planck.Vec2(dir * Config.MOVE_FORCE * speedScale, 0), true);
+        }
+
+        // Jump logic
+        if (ballPos.x > Config.COURT_W/2 && ballPos.x < b2Pos.x + 1 && ballPos.x > b2Pos.x - 1 && ballPos.y < 3.5 && ballPos.y > b2Pos.y) {
+                if (Math.abs(b2.getLinearVelocity().y) < 0.1) {
+                b2.applyLinearImpulse(planck.Vec2(0, Config.JUMP_IMPULSE), b2.getPosition(), true);
+                }
+        }
     }
-    
-    function isBlobTouchingGroundedBall(blob, ball) {
-        if (ball.getPosition().y > Config.BALL_R + 0.05) return false; // Ball not grounded
-        const distSq = Vec2.distanceSquared(blob.getPosition(), ball.getPosition());
-        const radiusSum = Config.BLOB_R + Config.BALL_R;
-        return distSq < (radiusSum * radiusSum);
+
+    function handleScore(winnerSide) {
+        if (State.timers.scoreDebounce > 0) return;
+        State.timers.scoreDebounce = 1.0;
+
+        if (winnerSide === 'left') State.scores.left++;
+        else State.scores.right++;
+
+        State.servingSide = (winnerSide === 'left') ? 'right' : 'left'; // Loser serves (standard) or winner? Standard is winner serves in some vars, but let's toggle.
+        
+        updateScoreBoard();
+
+        if (State.scores.left >= State.winScore || State.scores.right >= State.winScore) {
+                if (Math.abs(State.scores.left - State.scores.right) >= 2) {
+                    gameOver(winnerSide);
+                    return;
+                }
+        }
+
+        resetRally();
     }
-    
-    function enterServeMode(player) {
-        State.serveMode.active = true;
-        State.serveMode.player = player;
-        State.bodies.ball.setType('kinematic');
-        State.rallyStarted = false; // Pause rally timers etc.
+
+    function resetRally() {
+        State.rallyStarted = false;
+        State.inputFrozen = true;
+        State.timers.reset = 2; // 2 seconds delay before serve
+        
+        // Stop physics temporarily by setting velocities to 0
+        State.bodies.ball.setLinearVelocity(planck.Vec2(0,0));
+        State.bodies.ball.setAngularVelocity(0);
+        // Move ball off screen or hold it
+        State.bodies.ball.setPosition(planck.Vec2(Config.COURT_W/2, 10)); 
+    }
+
+    function spawnBall() {
+        State.rallyStarted = true;
+        State.inputFrozen = false;
         State.lastTouch = null;
         State.touchCount = 0;
-        messageEl.textContent = '... SET ...';
+        updateHUDText('');
+
+        const serveX = State.servingSide === 'left' ? Config.COURT_W * 0.25 : Config.COURT_W * 0.75;
+        const dir = State.servingSide === 'left' ? 1 : -1;
+
+        // Reset Blobs
+        State.bodies.blob1.setPosition(planck.Vec2(Config.COURT_W * 0.25, Config.BLOB_R));
+        State.bodies.blob1.setLinearVelocity(planck.Vec2(0,0));
+        State.bodies.blob2.setPosition(planck.Vec2(Config.COURT_W * 0.75, Config.BLOB_R));
+        State.bodies.blob2.setLinearVelocity(planck.Vec2(0,0));
+
+        // Serve Ball
+        State.bodies.ball.setPosition(planck.Vec2(serveX, 4));
+        State.bodies.ball.setLinearVelocity(planck.Vec2(0,0));
+        State.bodies.ball.setAngularVelocity(0);
+        
+        // Toss
+        setTimeout(() => {
+            if(!State.isPaused && State.rallyStarted)
+                State.bodies.ball.applyLinearImpulse(planck.Vec2(dir * 2, 4), State.bodies.ball.getPosition(), true);
+        }, 100);
     }
 
-    function launchManualServe() {
-        if (!State.serveMode.active) return;
-        
-        const player = State.serveMode.player;
-        const side = player.getUserData().side;
-        
-        State.bodies.ball.setType('dynamic');
-        
-        let impulse = Vec2(LiveConfig.MANUAL_SERVE_IMPULSE.vx, LiveConfig.MANUAL_SERVE_IMPULSE.vy);
-        if (side === 'right') impulse.x *= -1;
-        
-        State.bodies.ball.applyLinearImpulse(impulse, State.bodies.ball.getPosition(), true);
-        
-        State.lastTouch = side;
-        State.touchCount = 1;
-        State.serveMode = { active: false, player: null };
-        State.rallyStarted = true;
-        messageEl.textContent = '';
+    function gameOver(winner) {
+        State.isPaused = true;
+        State.rallyStarted = false;
+        const pName = winner === 'left' ? "LEFT" : "RIGHT";
+        updateHUDText(`${pName} WINS!`);
+        document.getElementById('action-btn').textContent = "New Match";
+        document.getElementById('panel').classList.remove('hidden');
     }
 
-    function isGrounded(blob) { /* unchanged */ const pos=blob.getPosition();let isGrounded=!1;State.world.rayCast(Vec2(pos.x,pos.y),Vec2(pos.x,pos.y-Config.BLOB_R-.05),fixture=>{if(fixture.getBody()===State.bodies.ground)return isGrounded=!0,0;return-1});return isGrounded}
-    function tryJump(blob) { /* unchanged */ Math.abs(blob.getLinearVelocity().y)<.1&&isGrounded(blob)&&blob.applyLinearImpulse(Vec2(0,LiveConfig.JUMP_IMPULSE),blob.getPosition(),!0)}
-    function awardPoint(side) { /* unchanged */ if(State.timers.scoreDebounce>0)return;side==="left"?State.scores.left++:State.scores.right++;updateScoreDisplay();if(checkWinCondition())endMatch(side);else State.servingSide=side==="left"?"right":"left",resetRally();State.timers.scoreDebounce=.5}
-    function checkWinCondition() { /* unchanged */ const{left:left,right:right}=State.scores;return(left>=State.winScore||right>=State.winScore)&&Math.abs(left-right)>=2}
-    function endMatch(winner) { /* unchanged */ State.isPaused=!0;panel.classList.remove("hidden");messageEl.textContent=`${winner.toUpperCase()} WINS!`;actionBtn.textContent="New Match"}
-    function startNewMatch() { /* unchanged */ State.scores.left=0;State.scores.right=0;updateScoreDisplay();State.servingSide=Math.random()<.5?"left":"right";State.isPaused=!1;panel.classList.add("hidden");actionBtn.textContent="Resume";resetRally()}
-    function resetRally() { State.rallyStarted=!1,State.inputFrozen=!0,State.lastTouch=null,State.touchCount=0,State.timers.resetCountdown=3,State.timers.autoServe=5;const ball=State.bodies.ball,serveX=State.servingSide==="left"?Config.COURT_W*.25:Config.COURT_W*.75;ball.setType("dynamic");ball.setPosition(Vec2(serveX,Config.COURT_H*.7));ball.setLinearVelocity(Vec2(0,0));ball.setAngularVelocity(0);State.bodies.blob1.setPosition(Vec2(Config.COURT_W*.25,Config.BLOB_R));State.bodies.blob1.setLinearVelocity(Vec2(0,0));State.bodies.blob2.setPosition(Vec2(Config.COURT_W*.75,Config.BLOB_R));State.bodies.blob2.setLinearVelocity(Vec2(0,0))}
-    function serveBall() { /* unchanged */ if(State.rallyStarted)return;State.rallyStarted=!0,State.inputFrozen=!1,State.timers.resetCountdown=0,messageEl.textContent="";const ball=State.bodies.ball,toss=State.servingSide==="left"?Config.SERVE_TOSS_L:Config.SERVE_TOSS_R;ball.applyLinearImpulse(Vec2(toss.vx,toss.vy),ball.getPosition(),!0)}
-    function setupContactListener() { /* unchanged */ State.world.on("begin-contact",contact=>{const bodyA=contact.getFixtureA().getBody(),bodyB=contact.getFixtureB().getBody(),dataA=bodyA.getUserData()||{},dataB=bodyB.getUserData()||{},ball=dataA.type==="ball"?bodyA:dataB.type==="ball"?bodyB:null;if(!ball)return;const otherData=dataA.type==="ball"?dataB:dataA;if(otherData.type==="ground")awardPoint(ball.getPosition().x<Config.COURT_W/2?"right":"left");else if(otherData.type==="blob"){State.lastTouch!==otherData.side?State.touchCount=1:State.touchCount++;State.lastTouch=otherData.side;State.useTouchLimit&&State.touchCount>3&&awardPoint(otherData.side==="left"?"right":"left");State.render.contactEffects.push({pos:ball.getPosition(),radius:0,alpha:1})}})}
-    function stepAI(dt) { /* unchanged */ State.ai.reactionTimer-=dt;if(State.ai.reactionTimer>0)return;State.ai.reactionTimer=Config.AI_REACTION_DELAY[State.difficulty];const ball=State.bodies.ball,aiBlob=State.bodies.blob2,ballPos=ball.getPosition(),blobPos=aiBlob.getPosition();if(!State.rallyStarted&&State.servingSide==="right"){if(ballPos.y<blobPos.y+Config.BLOB_R*2.5){State.ai.targetX=ballPos.x+.1;if(Math.abs(blobPos.x-ballPos.x)<.2)tryJump(aiBlob)}}else if(ballPos.x>Config.COURT_W/2){const prediction=predictBallLanding();State.ai.targetX=prediction.pos.x-.2;const shouldJump=ball.getLinearVelocity().y<-1&&Math.abs(ballPos.x-blobPos.x)<Config.BLOB_R*1.5&&ballPos.y-blobPos.y<Config.BLOB_R*2.5&&ballPos.y>blobPos.y;if(shouldJump&&Math.random()>Config.AI_JUMP_RANDOM[State.difficulty])tryJump(aiBlob)}else State.ai.targetX=Config.COURT_W*.75;State.ai.targetX=clamp(State.ai.targetX,Config.COURT_W/2+Config.NET_T+Config.BLOB_R,Config.COURT_W-Config.BLOB_R);const error=State.ai.targetX-blobPos.x,force=clamp(error*10,-Config.MOVE_FORCE,Config.MOVE_FORCE)*Config.AI_FORCE_SCALE[State.difficulty];aiBlob.applyForceToCenter(Vec2(force,0),!0)}
-    function predictBallLanding() { /* unchanged */ let pos=State.bodies.ball.getPosition().clone(),vel=State.bodies.ball.getLinearVelocity().clone();const dt=1/60;for(let i=0;i<120;i++){vel.y+=LiveConfig.GRAVITY*dt;vel.mul(1-Config.BALL_DAMP*dt);pos.add(vel.clone().mul(dt));if(pos.x>Config.COURT_W/2&&vel.y<0)return{pos:pos,time:i*dt};if(pos.y<Config.BALL_R)return{pos:pos,time:i*dt};if(pos.x<Config.BALL_R||pos.x>Config.COURT_W-Config.BALL_R)return{pos:pos,time:i*dt};if(pos.y>Config.COURT_H-Config.BALL_R)return{pos:pos,time:i*dt}}return{pos:Vec2(Config.COURT_W*.75,0),time:2}}
-    function render() { /* unchanged */ ctx.clearRect(0,0,1600,900);ctx.save();drawCourt();if(State.bodies.ball){drawBallTrail();drawBody(State.bodies.ball,getComputedStyle(document.body).getPropertyValue("--ball-color"));drawBlob(State.bodies.blob1,getComputedStyle(document.body).getPropertyValue("--blob1-color"),"blob1Scale");drawBlob(State.bodies.blob2,getComputedStyle(document.body).getPropertyValue("--blob2-color"),"blob2Scale");drawContactEffects()}ctx.restore()}
-    function drawCourt() { /* unchanged */ ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--court-bg");ctx.fillRect(0,0,1600,900);ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--court-line");ctx.fillRect(0,900-5,1600,5);const netScreenPos=worldToScreen(State.bodies.net.getPosition()),netWidth=Config.NET_T*Config.PPM,netHeight=Config.NET_H*Config.PPM;ctx.fillStyle=getComputedStyle(document.body).getPropertyValue("--net-color");ctx.fillRect(netScreenPos.x-netWidth/2,netScreenPos.y-netHeight/2,netWidth,netHeight)}
-    function drawBody(body,color) { /* unchanged */ const pos=worldToScreen(body.getPosition()),fixture=body.getFixtureList();if(!fixture)return;const radius=fixture.getShape().m_radius*Config.PPM;ctx.beginPath();ctx.arc(pos.x,pos.y,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.fill()}
-    function drawBlob(body,color,scaleKey) { /* unchanged */ const pos=worldToScreen(body.getPosition()),vel=body.getLinearVelocity(),radius=body.getFixtureList().getShape().m_radius*Config.PPM,targetScaleX=1+.08*clamp(vel.x/6,-1,1),targetScaleY=1-.12*clamp(Math.abs(vel.y)/8,0,1);State.render[scaleKey].x=lerp(State.render[scaleKey].x,targetScaleX,.2);State.render[scaleKey].y=lerp(State.render[scaleKey].y,targetScaleY,.2);ctx.save();ctx.translate(pos.x,pos.y);ctx.scale(State.render[scaleKey].x,State.render[scaleKey].y);ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();ctx.beginPath();const eyeSide=body.getUserData().side==="left"?1:-1,eyeX=radius*.4*eyeSide/State.render[scaleKey].x,eyeY=-radius*.2/State.render[scaleKey].y;ctx.arc(eyeX,eyeY,radius*.15,0,Math.PI*2);ctx.fillStyle="#fff";ctx.fill();ctx.restore()}
-    function drawBallTrail() { /* unchanged */ const trail=State.render.ballTrail;trail.push(State.bodies.ball.getPosition().clone());if(trail.length>10)trail.shift();const color=getComputedStyle(document.body).getPropertyValue("--ball-color");for(let i=0;i<trail.length;i++){const screenPos=worldToScreen(trail[i]),radius=Config.BALL_R*Config.PPM*(i/trail.length);ctx.beginPath();ctx.arc(screenPos.x,screenPos.y,radius,0,Math.PI*2);ctx.fillStyle=color;ctx.globalAlpha=.5*(i/trail.length);ctx.fill()}ctx.globalAlpha=1}
-    function drawContactEffects() { /* unchanged */ ctx.strokeStyle=getComputedStyle(document.body).getPropertyValue("--text-color");ctx.lineWidth=2;State.render.contactEffects=State.render.contactEffects.filter(effect=>{effect.radius+=2;effect.alpha-=.05;if(effect.alpha<=0)return!1;const screenPos=worldToScreen(effect.pos);ctx.globalAlpha=effect.alpha;ctx.beginPath();ctx.arc(screenPos.x,screenPos.y,effect.radius,0,Math.PI*2);ctx.stroke();return!0});ctx.globalAlpha=1}
-    function updateHUD(dt) { /* unchanged */ if(State.showDebug){frameCount++;lastFpsUpdate+=dt;if(lastFpsUpdate>=1){debugEl.textContent=`FPS: ${frameCount}`;frameCount=0;lastFpsUpdate=0}}if(State.timers.resetCountdown>0&&!State.isPaused)messageEl.textContent=`... ${Math.ceil(State.timers.resetCountdown)} ...`;else if(State.isPaused&&panel.classList.contains("hidden"))messageEl.textContent="PAUSED";else if(!State.rallyStarted&&!State.isPaused&&!State.serveMode.active)messageEl.textContent="... SERVE ...";else if(!panel.classList.contains("hidden"));else State.serveMode.active||(messageEl.textContent="");updateScoreDisplay()}
-    function updateScoreDisplay() { /* unchanged */ scoreEl.textContent=`L ${State.scores.left} - ${State.scores.right} R`;const servingText=State.servingSide==="left"?"\u25c0 SERVE":"SERVE \u25b6";serverEl.textContent=State.rallyStarted||State.isPaused||State.serveMode.active?"":servingText}
-    
-    // -- UI & INPUT --
-    function setupUI() {
-        document.querySelectorAll('input[name="mode"]').forEach(el => el.addEventListener('change', (e) => State.mode = e.target.value));
-        document.querySelectorAll('input[name="difficulty"]').forEach(el => el.addEventListener('change', (e) => State.difficulty = e.target.value));
-        document.querySelectorAll('input[name="win-score"]').forEach(el => el.addEventListener('change', (e) => State.winScore = parseInt(e.target.value, 10)));
-        document.querySelectorAll('input[name="touch-limit"]').forEach(el => el.addEventListener('change', (e) => State.useTouchLimit = e.target.value === 'true'));
-        
-        actionBtn.addEventListener('click', () => {
-            const text = actionBtn.textContent;
-            if (text === 'Start Game' || text === 'New Match') startNewMatch();
-            else if (text === 'Resume') togglePause();
-        });
+    // --- VISUAL UPDATES ---
+    function updateVisuals(dt) {
+        // Sync positions
+        syncMesh(State.meshes.blob1, State.bodies.blob1);
+        syncMesh(State.meshes.blob2, State.bodies.blob2);
+        syncMesh(State.meshes.ball, State.bodies.ball);
 
-        settingsBtn.addEventListener('click', togglePause);
-        document.getElementById('theme-btn').addEventListener('click', () => document.body.classList.toggle('dark'));
+        // Squash & Stretch Logic (The "Jelly" effect)
+        applySquash(State.meshes.blob1, State.bodies.blob1);
+        applySquash(State.meshes.blob2, State.bodies.blob2);
 
-        // Physics UI Listeners
-        physicsPresetEl.addEventListener('change', (e) => {
-            if (e.target.value !== 'Custom') {
-                applyPhysicsPreset(e.target.value);
+        // Particles
+        for (let i = State.particles.length - 1; i >= 0; i--) {
+            const p = State.particles[i];
+            p.mesh.position.add(p.vel);
+            p.life -= dt * 2;
+            p.mesh.scale.setScalar(p.life * 0.2);
+            if (p.life <= 0) {
+                State.scene.remove(p.mesh);
+                State.particles.splice(i, 1);
             }
+        }
+    }
+
+    function syncMesh(mesh, body) {
+        const pos = body.getPosition();
+        mesh.position.x = pos.x;
+        mesh.position.y = pos.y;
+        mesh.rotation.z = body.getAngle();
+    }
+
+    function applySquash(mesh, body) {
+        const vel = body.getLinearVelocity();
+        // Stretch based on Y velocity
+        const stretch = Math.min(Math.abs(vel.y) * 0.05, 0.4); 
+        const scaleY = 1 + stretch;
+        const scaleX = 1 - (stretch * 0.5); // Volume conservation
+        
+        // Smooth transition
+        mesh.scale.y = THREE.MathUtils.lerp(mesh.scale.y, scaleY, 0.2);
+        mesh.scale.x = THREE.MathUtils.lerp(mesh.scale.x, scaleX, 0.2);
+        mesh.scale.z = mesh.scale.x;
+    }
+
+    function spawnParticles(pos, color) {
+        const geo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
+        const mat = new THREE.MeshBasicMaterial({ color: color });
+        for(let i=0; i<8; i++) {
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.copy(new THREE.Vector3(pos.x, pos.y, 0));
+            
+            // Random explosion velocity
+            const theta = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 0.2;
+            const vel = new THREE.Vector3(Math.cos(theta)*speed, Math.sin(theta)*speed, (Math.random()-0.5)*0.2);
+            
+            State.scene.add(mesh);
+            State.particles.push({ mesh, vel, life: 1.0 });
+        }
+    }
+
+    // --- UI & INPUTS ---
+    function updateHUDText(msg) { document.getElementById('message').textContent = msg; }
+    function updateScoreBoard() {
+        document.getElementById('score').textContent = `L ${State.scores.left} - ${State.scores.right} R`;
+        const ind = document.getElementById('server-indicator');
+        ind.textContent = State.rallyStarted ? "" : (State.servingSide === 'left' ? "< Serve" : "Serve >");
+    }
+
+    function setupInputs() {
+        window.addEventListener('keydown', (e) => {
+            const k = e.key.toLowerCase();
+            State.keys.add(k);
+            if (k === 'p') togglePause();
         });
-
-        gravitySlider.addEventListener('input', handleSliderChange);
-        bounceSlider.addEventListener('input', handleSliderChange);
-        speedSlider.addEventListener('input', handleSliderChange);
-
-        initPhysicsUI();
-    }
-    
-    function initPhysicsUI() {
-        gravitySlider.value = -LiveConfig.GRAVITY;
-        gravityValue.textContent = (-LiveConfig.GRAVITY).toFixed(1);
-        bounceSlider.value = LiveConfig.BALL_REST;
-        bounceValue.textContent = LiveConfig.BALL_REST.toFixed(2);
-        speedSlider.value = LiveConfig.BALL_VMAX;
-        speedValue.textContent = LiveConfig.BALL_VMAX.toFixed(1);
-        physicsPresetEl.value = "Default";
-    }
-
-    function applyPhysicsPreset(presetName) {
-        const preset = PhysicsPresets[presetName];
-        if (!preset) return;
-        
-        LiveConfig.GRAVITY = preset.GRAVITY;
-        LiveConfig.BALL_REST = preset.BALL_REST;
-        LiveConfig.BALL_VMAX = preset.BALL_VMAX;
-        
-        initPhysicsUI();
-        updateLivePhysicsProperties();
-    }
-    
-    function handleSliderChange(e) {
-        physicsPresetEl.value = 'Custom';
-        const val = parseFloat(e.target.value);
-        if (e.target === gravitySlider) {
-            LiveConfig.GRAVITY = -val;
-            gravityValue.textContent = val.toFixed(1);
-        } else if (e.target === bounceSlider) {
-            LiveConfig.BALL_REST = val;
-            bounceValue.textContent = val.toFixed(2);
-        } else if (e.target === speedSlider) {
-            LiveConfig.BALL_VMAX = val;
-            speedValue.textContent = val.toFixed(1);
-        }
-        updateLivePhysicsProperties();
-    }
-    
-    function updateLivePhysicsProperties() {
-        if (!State.world) return;
-        State.world.setGravity(Vec2(0, LiveConfig.GRAVITY));
-        if (State.bodies.ball) {
-            State.bodies.ball.getFixtureList().setRestitution(LiveConfig.BALL_REST);
-        }
+        window.addEventListener('keyup', (e) => State.keys.delete(e.key.toLowerCase()));
     }
 
     function togglePause() {
-        if (actionBtn.textContent === 'Start Game') return;
+        const btn = document.getElementById('action-btn');
+        if (btn.textContent === "Start Game" || btn.textContent === "New Match") return;
+        
         State.isPaused = !State.isPaused;
-        panel.classList.toggle('hidden', !State.isPaused);
-        if (actionBtn.textContent !== 'New Match') actionBtn.textContent = State.isPaused ? 'Resume' : 'Pause';
+        document.getElementById('panel').classList.toggle('hidden', !State.isPaused);
+        btn.textContent = State.isPaused ? "Resume" : "Pause";
     }
 
-    function setupInputListeners() {
-        window.addEventListener('keydown', (e) => {
-            const key = e.key.toLowerCase();
-            if (key === 'p') togglePause();
-            if (key === 'f3') { e.preventDefault(); State.showDebug = !State.showDebug; debugEl.style.display = State.showDebug ? 'block' : 'none'; }
+    function setupUI() {
+        const els = {
+            mode: document.getElementsByName('mode'),
+            diff: document.getElementsByName('difficulty'),
+            grav: document.getElementById('gravity-slider'),
+            bounce: document.getElementById('bounce-slider'),
+            preset: document.getElementById('physics-preset'),
+            theme: document.getElementById('theme-btn'),
+            action: document.getElementById('action-btn'),
+            settings: document.getElementById('settings-btn')
+        };
+
+        els.mode.forEach(r => r.addEventListener('change', e => State.mode = e.target.value));
+        els.diff.forEach(r => r.addEventListener('change', e => State.difficulty = e.target.value));
+        
+        // Physics Sliders
+        const updatePhys = () => {
+            Config.GRAVITY = -parseFloat(els.grav.value);
+            Config.BALL_REST = parseFloat(els.bounce.value);
+            document.getElementById('gravity-value').textContent = Math.abs(Config.GRAVITY).toFixed(1);
+            document.getElementById('bounce-value').textContent = Config.BALL_REST.toFixed(2);
             
-            const relevantKeys = ['w', 'a', 'd', 's', 'arrowup', 'arrowleft', 'arrowright', 'arrowdown'];
-            if (relevantKeys.includes(key)) {
-                e.preventDefault();
-                State.keysPressed.add(key);
-                if (State.bodies.blob1) State.bodies.blob1.setAwake(true);
-                if (State.bodies.blob2) State.bodies.blob2.setAwake(true);
-            }
-        });
-        window.addEventListener('keyup', (e) => {
-            const key = e.key.toLowerCase();
-            State.keysPressed.delete(key);
+            if (State.world) State.world.setGravity(planck.Vec2(0, Config.GRAVITY));
+            if (State.bodies.ball) State.bodies.ball.getFixtureList().setRestitution(Config.BALL_REST);
             
-            // Handle serve on key release
-            if (State.serveMode.active) {
-                const side = State.serveMode.player.getUserData().side;
-                if ((key === 's' && side === 'left') || (key === 'arrowdown' && side === 'right')) {
-                    launchManualServe();
-                }
+            els.preset.value = "Custom";
+        };
+        els.grav.addEventListener('input', updatePhys);
+        els.bounce.addEventListener('input', updatePhys);
+
+        els.preset.addEventListener('change', (e) => {
+            if(e.target.value === "Default") {
+                els.grav.value = 18; els.bounce.value = 0.85;
+            } else if (e.target.value === "Floaty") {
+                els.grav.value = 10; els.bounce.value = 0.95;
+            } else if (e.target.value === "Fast") {
+                els.grav.value = 25; els.bounce.value = 0.70;
             }
+            if(e.target.value !== "Custom") updatePhys();
         });
+
+        els.theme.addEventListener('click', () => {
+            document.body.classList.toggle('dark');
+            const isDark = document.body.classList.contains('dark');
+            State.scene.background = new THREE.Color(isDark ? Config.COLOR_BG_DARK : Config.COLOR_BG_LIGHT);
+            State.scene.fog.color.set(isDark ? Config.COLOR_BG_DARK : Config.COLOR_BG_LIGHT);
+        });
+
+        els.action.addEventListener('click', () => {
+            if (els.action.textContent === "Resume") togglePause();
+            else startMatch();
+        });
+
+        els.settings.addEventListener('click', togglePause);
     }
+
+    function startMatch() {
+        State.scores = { left: 0, right: 0 };
+        updateScoreBoard();
+        document.getElementById('panel').classList.add('hidden');
+        document.getElementById('action-btn').textContent = "Resume";
+        State.isPaused = false;
+        State.timers.scoreDebounce = 0;
+        State.servingSide = Math.random() < 0.5 ? 'left' : 'right';
+        resetRally();
+    }
+
 })();
