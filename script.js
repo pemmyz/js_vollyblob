@@ -14,6 +14,9 @@
         DT: 1 / 60,
         COURT_W: 11.0,
         COURT_H: 7.0,
+        // CEILING_H: Based on Camera FOV(40) and Dist(16), visible height at center is ~10m.
+        // We set it to 9.5 to effectively cap it at the top of the visible screen.
+        CEILING_H: 11.5, 
         NET_H: 3.2,
         NET_T: 0.1,
         BALL_R: 0.25,
@@ -105,8 +108,8 @@
         State.scene.fog = new THREE.Fog(Config.COLOR_BG_LIGHT, 10, 30);
 
         State.camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
-        State.camera.position.set(Config.COURT_W / 2, 5, 16);
-        State.camera.lookAt(Config.COURT_W / 2, 3, 0);
+        State.camera.position.set(Config.COURT_W / 2, 7.5, 16);
+        State.camera.lookAt(Config.COURT_W / 2, 5.5, 0);
 
         State.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         State.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -224,10 +227,17 @@
         State.bodies.ground = ground;
 
         // Walls & Ceiling
+        // MODIFICATION: Defined ceiling height via Config.CEILING_H to limit upper border
         const wallDef = { friction: 0.0, restitution: 0.1 };
-        State.world.createBody().createFixture(pl.Edge(Vec2(0, 0), Vec2(0, 20)), wallDef);
-        State.world.createBody().createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, 20)), wallDef);
-        State.world.createBody().createFixture(pl.Edge(Vec2(-5, 15), Vec2(20, 15)), wallDef);
+        
+        // Left Wall (extends to ceiling)
+        State.world.createBody().createFixture(pl.Edge(Vec2(0, 0), Vec2(0, Config.CEILING_H)), wallDef);
+        
+        // Right Wall (extends to ceiling)
+        State.world.createBody().createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, Config.CEILING_H)), wallDef);
+        
+        // The Ceiling (Limits the upper border)
+        State.world.createBody().createFixture(pl.Edge(Vec2(-5, Config.CEILING_H), Vec2(Config.COURT_W + 5, Config.CEILING_H)), wallDef);
 
         // Net
         const netBody = State.world.createBody(Vec2(Config.COURT_W / 2, Config.NET_H / 2));
@@ -468,6 +478,7 @@
         State.bodies.blob2.setPosition(planck.Vec2(Config.COURT_W * 0.75, Config.BLOB_R));
         State.bodies.blob2.setLinearVelocity(planck.Vec2(0,0));
 
+        // Start ball lower so it doesn't glitch through ceiling on spawn
         State.bodies.ball.setPosition(planck.Vec2(serveX, 4));
         State.bodies.ball.setLinearVelocity(planck.Vec2(0,0));
         State.bodies.ball.setAngularVelocity(0);
