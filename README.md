@@ -4,7 +4,7 @@
 
 **Blobby Volley 3D** is a browser-based volleyball game built with
 **Three.js** for 3D rendering and **Planck.js** for 2D physics
-simulation.\
+simulation.
 The classic Blobby Volley gameplay is reimagined in full 3D with dynamic
 lighting, shadows, physics tuning, AI opponents, and multiple play
 modes.
@@ -21,31 +21,31 @@ modes.
 
 ### Difficulty Levels
 
--   Easy\
--   Normal (default)\
+-   Easy
+-   Normal (default)
 -   Hard
 
-Each difficulty adjusts: - AI movement speed\
+Each difficulty adjusts: - AI movement speed
 - Reaction delay
 
 ------------------------------------------------------------------------
 
 ## 🧠 Physics System
 
-Powered by **Planck.js**, the game supports: - Gravity tuning\
-- Bounce coefficient\
-- Custom presets: Default, Floaty, Fast, Custom\
-- Accurate collisions for ball, blobs, ground, walls, and net\
+Powered by **Planck.js**, the game supports: - Gravity tuning
+- Bounce coefficient
+- Custom presets: Default, Floaty, Fast, Custom
+- Accurate collisions for ball, blobs, ground, walls, and net
 - Ceilings to prevent balls from flying out of view
 
 ------------------------------------------------------------------------
 
 ## 🖥️ Graphics & Rendering
 
-Using **Three.js**, the game includes: - Dynamic shadows\
-- Ambient and directional lighting\
-- Fog for scene depth\
-- 3D meshes for blobs, ball, court, and net\
+Using **Three.js**, the game includes: - Dynamic shadows
+- Ambient and directional lighting
+- Fog for scene depth
+- 3D meshes for blobs, ball, court, and net
 - Cute blob eyes with small animations
 
 Dark Mode is also included, toggleable via settings.
@@ -56,7 +56,7 @@ Dark Mode is also included, toggleable via settings.
 
 ### Player 1
 
--   **Move:** WASD\
+-   **Move:** WASD
 -   **Pause:** P
 
 ### Player 2
@@ -95,10 +95,10 @@ Loaded via CDN: - **Three.js r128** - **Planck.js 0.3.31**
 
 ## 🚧 Work in Progress Features
 
--   Particle effects\
--   Enhanced blob animations\
--   Better UI transitions\
--   Audio support\
+-   Particle effects
+-   Enhanced blob animations
+-   Better UI transitions
+-   Audio support
 -   Mobile controls
 
 ------------------------------------------------------------------------
