@@ -11,6 +11,9 @@ modes.
 
 ------------------------------------------------------------------------
 
+![screenshot](screenshots/game_1.png)
+
+
 ## 🎮 Features
 
 ### Game Modes
