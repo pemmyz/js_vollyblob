@@ -2,7 +2,8 @@
     --bg-color: #f0f4f8;
     --text-color: #2c3e50;
     --accent-color: #3498db;
-    --panel-bg: rgba(255, 255, 255, 0.85);
+    /* Updated to 70% opacity */
+    --panel-bg: rgba(255, 255, 255, 0.7);
     --shadow-color: rgba(0, 0, 0, 0.1);
     --border-color: #bdc3c7;
 }
@@ -11,7 +12,8 @@ body.dark {
     --bg-color: #1a202c;
     --text-color: #e2e8f0;
     --accent-color: #4299e1;
-    --panel-bg: rgba(45, 55, 72, 0.9);
+    /* Updated to 70% opacity */
+    --panel-bg: rgba(45, 55, 72, 0.7);
     --shadow-color: rgba(0, 0, 0, 0.5);
     --border-color: #4a5568;
 }
@@ -78,6 +80,16 @@ canvas { display: block; outline: none; }
 
 #panel.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
 #panel h2, #panel h3 { text-align: center; margin-bottom: 0.5rem; }
+
+/* New Countdown Style */
+#auto-start-counter {
+    text-align: center;
+    font-size: 0.85em;
+    color: var(--accent-color);
+    font-weight: bold;
+    min-height: 1.2em;
+    margin-top: -10px;
+}
 
 .control-group { display: flex; justify-content: space-between; align-items: center; }
 .radio-group { display: flex; gap: 0.5rem; }

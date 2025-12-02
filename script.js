@@ -14,8 +14,6 @@
         DT: 1 / 60,
         COURT_W: 11.0,
         COURT_H: 7.0,
-        // CEILING_H: Based on Camera FOV(40) and Dist(16), visible height at center is ~10m.
-        // We set it to 9.5 to effectively cap it at the top of the visible screen.
         CEILING_H: 11.5, 
         NET_H: 3.2,
         NET_T: 0.1,
@@ -54,15 +52,25 @@
         scores: { left: 0, right: 0 },
         servingSide: 'left',
         rallyStarted: false,
-        isPaused: true,
+        
+        // Logic Flags
+        isPaused: true,      // Standard user pause
+        attractMode: false,  // AI Playing in BG while menu is open
+        matchInProgress: false, // Has the user actually started a game?
+
         inputFrozen: true,
         mode: '1P',
         difficulty: 'Normal',
         winScore: 11,
+        
+        // Timers
         timers: { reset: 0, scoreDebounce: 0 },
+        autoStartTimer: 7.0,
+        
         keys: new Set(),
         lastTouch: null,
         touchCount: 0,
+        
         // Independent AI State for both sides
         ai: { 
             left: { targetX: Config.COURT_W * 0.25, frameCounter: 0 },
@@ -88,9 +96,13 @@
             const dt = (time - lastTime) / 1000 || 0;
             lastTime = time;
 
-            if (!State.isPaused) {
+            // Logic runs if game is unpaused OR if we are in attract mode (BG game)
+            if (!State.isPaused || State.attractMode) {
                 State.world.step(Config.DT);
                 updateGameLogic(Config.DT);
+            } else {
+                // If strictly paused (no attract mode), run menu logic
+                updateMenuLogic(dt);
             }
 
             updateVisuals(dt);
@@ -227,16 +239,9 @@
         State.bodies.ground = ground;
 
         // Walls & Ceiling
-        // MODIFICATION: Defined ceiling height via Config.CEILING_H to limit upper border
         const wallDef = { friction: 0.0, restitution: 0.1 };
-        
-        // Left Wall (extends to ceiling)
         State.world.createBody().createFixture(pl.Edge(Vec2(0, 0), Vec2(0, Config.CEILING_H)), wallDef);
-        
-        // Right Wall (extends to ceiling)
         State.world.createBody().createFixture(pl.Edge(Vec2(Config.COURT_W, 0), Vec2(Config.COURT_W, Config.CEILING_H)), wallDef);
-        
-        // The Ceiling (Limits the upper border)
         State.world.createBody().createFixture(pl.Edge(Vec2(-5, Config.CEILING_H), Vec2(Config.COURT_W + 5, Config.CEILING_H)), wallDef);
 
         // Net
@@ -298,12 +303,44 @@
     }
 
     // --- LOGIC LOOP ---
+    function updateMenuLogic(dt) {
+        // Handle Auto-Start Countdown
+        if (!State.matchInProgress && State.autoStartTimer > 0) {
+            State.autoStartTimer -= dt;
+            const counterEl = document.getElementById('auto-start-counter');
+            
+            if (State.autoStartTimer <= 0) {
+                // Time up! Start Background AI
+                counterEl.textContent = "";
+                startAttractMode();
+            } else {
+                counterEl.textContent = `Auto-start in ${Math.ceil(State.autoStartTimer)}s`;
+            }
+        }
+    }
+
+    function startAttractMode() {
+        State.attractMode = true;
+        // Keep actual physics unpaused, but logically game is 'paused' for user
+        State.mode = 'AIvsAI'; 
+        
+        // Reset state for the AI match
+        State.scores = { left: 0, right: 0 };
+        updateScoreBoard();
+        State.servingSide = 'left';
+        
+        // Start the physics rally
+        resetRally();
+        // Give it a kick
+        setTimeout(spawnBall, 500);
+    }
+
     function updateGameLogic(dt) {
         if (State.timers.scoreDebounce > 0) State.timers.scoreDebounce -= dt;
         if (State.timers.reset > 0) {
             State.timers.reset -= dt;
             if (State.timers.reset <= 0) spawnBall();
-            else updateHUDText(`... ${Math.ceil(State.timers.reset)} ...`);
+            else if (!State.attractMode) updateHUDText(`... ${Math.ceil(State.timers.reset)} ...`);
         }
 
         if (State.inputFrozen) return;
@@ -353,7 +390,6 @@
 
     /**
      * GENERIC AI LOGIC
-     * Works for both left and right blobs
      */
     function updateAI(blob, aiState) {
         const side = blob.getUserData().side;
@@ -391,10 +427,7 @@
                     simPos.x += simVel.x * timeStep;
                     simPos.y += simVel.y * timeStep;
 
-                    // Stop if hits walls
                     if (simPos.x < 0 || simPos.x > Config.COURT_W) break;
-
-                    // Stop if hits head height
                     if (simPos.y <= 1.2) {
                         predictedX = simPos.x;
                         break;
@@ -426,10 +459,9 @@
         const isAbove = ballPos.y > blobPos.y + 0.8 && ballPos.y < 3.5;
         const isFalling = ballVel.y < 0;
         
-        // Side specific jump triggers to spike towards opponent
         let goodSpikeOpportunity = false;
-        if (side === 'left') goodSpikeOpportunity = (ballPos.x > blobPos.x); // Ball is in front, hit forward
-        else goodSpikeOpportunity = (ballPos.x < blobPos.x); // Ball is in front (relative to left)
+        if (side === 'left') goodSpikeOpportunity = (ballPos.x > blobPos.x); 
+        else goodSpikeOpportunity = (ballPos.x < blobPos.x); 
 
         if (isUnder && isAbove && isFalling && goodSpikeOpportunity) {
             if (Math.abs(blob.getLinearVelocity().y) < 0.1 && blobPos.y < 1.0) {
@@ -444,9 +476,13 @@
         if (winnerSide === 'left') State.scores.left++; else State.scores.right++;
         State.servingSide = (winnerSide === 'left') ? 'right' : 'left'; 
         updateScoreBoard();
-        if ((State.scores.left >= State.winScore || State.scores.right >= State.winScore) && Math.abs(State.scores.left - State.scores.right) >= 2) {
-            gameOver(winnerSide);
-            return;
+        
+        // Check win condition (only in real match)
+        if (State.matchInProgress) {
+            if ((State.scores.left >= State.winScore || State.scores.right >= State.winScore) && Math.abs(State.scores.left - State.scores.right) >= 2) {
+                gameOver(winnerSide);
+                return;
+            }
         }
         resetRally();
     }
@@ -468,7 +504,7 @@
         State.inputFrozen = false;
         State.lastTouch = null;
         State.touchCount = 0;
-        updateHUDText('');
+        if (!State.attractMode) updateHUDText('');
 
         const serveX = State.servingSide === 'left' ? Config.COURT_W * 0.25 : Config.COURT_W * 0.75;
         const dir = State.servingSide === 'left' ? 1 : -1;
@@ -478,13 +514,13 @@
         State.bodies.blob2.setPosition(planck.Vec2(Config.COURT_W * 0.75, Config.BLOB_R));
         State.bodies.blob2.setLinearVelocity(planck.Vec2(0,0));
 
-        // Start ball lower so it doesn't glitch through ceiling on spawn
         State.bodies.ball.setPosition(planck.Vec2(serveX, 4));
         State.bodies.ball.setLinearVelocity(planck.Vec2(0,0));
         State.bodies.ball.setAngularVelocity(0);
         
         setTimeout(() => {
-            if(!State.isPaused && State.rallyStarted)
+            // Only serve if still running
+            if((!State.isPaused || State.attractMode) && State.rallyStarted)
                 State.bodies.ball.applyLinearImpulse(planck.Vec2(dir * 2, 4), State.bodies.ball.getPosition(), true);
         }, 100);
     }
@@ -492,6 +528,7 @@
     function gameOver(winner) {
         State.isPaused = true;
         State.rallyStarted = false;
+        State.matchInProgress = false;
         const pName = winner === 'left' ? "LEFT" : "RIGHT";
         updateHUDText(`${pName} WINS!`);
         document.getElementById('action-btn').textContent = "New Match";
@@ -565,8 +602,11 @@
 
     function togglePause() {
         const btn = document.getElementById('action-btn');
+        // Prevent pause if in main menu/attract mode
         if (btn.textContent === "Start Game" || btn.textContent === "New Match") return;
+        
         State.isPaused = !State.isPaused;
+        State.attractMode = false; // Ensure we aren't in attract mode if manually pausing
         document.getElementById('panel').classList.toggle('hidden', !State.isPaused);
         btn.textContent = State.isPaused ? "Resume" : "Pause";
     }
@@ -583,10 +623,26 @@
             settings: document.getElementById('settings-btn')
         };
 
-        els.mode.forEach(r => r.addEventListener('change', e => State.mode = e.target.value));
-        els.diff.forEach(r => r.addEventListener('change', e => State.difficulty = e.target.value));
+        // If user interacts with UI, stop the countdown
+        const stopCountdown = () => {
+            if (!State.matchInProgress && State.autoStartTimer > 0) {
+                State.autoStartTimer = -1; // Kill timer
+                document.getElementById('auto-start-counter').textContent = "";
+            }
+        };
+
+        els.mode.forEach(r => r.addEventListener('change', e => { 
+            stopCountdown();
+            // If in attract mode, this shouldn't apply until real match starts, 
+            // but we can update UI selection.
+        }));
+        els.diff.forEach(r => r.addEventListener('change', e => {
+            stopCountdown();
+            State.difficulty = e.target.value;
+        }));
         
         const updatePhys = () => {
+            stopCountdown();
             Config.GRAVITY = -parseFloat(els.grav.value);
             Config.BALL_REST = parseFloat(els.bounce.value);
             document.getElementById('gravity-value').textContent = Math.abs(Config.GRAVITY).toFixed(1);
@@ -599,6 +655,7 @@
         els.bounce.addEventListener('input', updatePhys);
 
         els.preset.addEventListener('change', (e) => {
+            stopCountdown();
             if(e.target.value === "Default") { els.grav.value = 18; els.bounce.value = 0.85; }
             else if (e.target.value === "Floaty") { els.grav.value = 10; els.bounce.value = 0.95; }
             else if (e.target.value === "Fast") { els.grav.value = 25; els.bounce.value = 0.70; }
@@ -606,6 +663,7 @@
         });
 
         els.theme.addEventListener('click', () => {
+            // Doesn't necessarily need to stop countdown, but good practice
             document.body.classList.toggle('dark');
             const isDark = document.body.classList.contains('dark');
             State.scene.background = new THREE.Color(isDark ? Config.COLOR_BG_DARK : Config.COLOR_BG_LIGHT);
@@ -621,6 +679,15 @@
     }
 
     function startMatch() {
+        State.attractMode = false;
+        State.matchInProgress = true;
+        State.autoStartTimer = -1;
+        document.getElementById('auto-start-counter').textContent = "";
+
+        // Read selected mode from UI
+        const modes = document.getElementsByName('mode');
+        for(let m of modes) if(m.checked) State.mode = m.value;
+
         State.scores = { left: 0, right: 0 };
         updateScoreBoard();
         document.getElementById('panel').classList.add('hidden');
