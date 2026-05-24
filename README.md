@@ -9,6 +9,8 @@ The classic Blobby Volley gameplay is reimagined in full 3D with dynamic
 lighting, shadows, physics tuning, AI opponents, and multiple play
 modes.
 
+## Play it now: https://pemmyz.github.io/js_vollyblob/
+
 ------------------------------------------------------------------------
 
 ![screenshot](screenshots/game_1.png)
